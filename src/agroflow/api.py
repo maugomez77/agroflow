@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import store
 from . import ai as ai_module
+from .demo import async_generate_demo_data
 
 app = FastAPI(
     title="AgroFlow Intelligence API",
@@ -33,6 +34,13 @@ def health():
 
 
 # ── Farms ──────────────────────────────────────────────────────
+
+@app.post("/v1/refresh")
+async def refresh_data():
+    """Re-research and refresh all data with current market conditions."""
+    await async_generate_demo_data()
+    return {"status": "refreshed", "message": "Data refreshed with real-time market research."}
+
 
 @app.get("/v1/farms")
 def list_farms():

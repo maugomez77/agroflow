@@ -13,7 +13,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from . import store
-from .demo import generate_demo_data
+from .demo import generate_demo_data, async_generate_demo_data
 
 app = typer.Typer(
     name="agroflow",
@@ -319,11 +319,14 @@ def report():
 
 @app.command()
 def demo():
-    """Load demo data for Michoacan agricultural supply chain."""
+    """Load demo data with real-time market research."""
+    import asyncio
+    console.print("[bold cyan]Researching real market data...[/bold cyan]")
+    console.print("[dim]Searching DuckDuckGo for prices, weather, export news, and buyer activity...[/dim]")
     with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as prog:
-        prog.add_task("Generating demo data...", total=None)
-        generate_demo_data()
-    console.print("[bold green]Demo data loaded![/bold green] 12 farms, 30 harvests, 8 shipments, 6 buyers, and more.")
+        prog.add_task("Gathering real-time data and generating demo...", total=None)
+        asyncio.run(async_generate_demo_data())
+    console.print("[bold green]Demo data loaded with real-time research![/bold green] 12 farms, 30 harvests, 8 shipments, 6 buyers, and more.")
     console.print("[dim]Run [bold]agroflow status[/bold] to see the dashboard.[/dim]")
 
 
