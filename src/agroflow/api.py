@@ -15,13 +15,19 @@ from .demo import async_generate_demo_data
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Auto-research real-time data on startup if store is empty."""
-    data = store.load()
-    if not data.get("farms"):
-        try:
-            await async_generate_demo_data()
-        except Exception:
-            pass  # Will serve empty until /v1/refresh is called
+    """Auto-research real-time data in background after startup."""
+    import asyncio
+
+    async def _background_research():
+        data = store.load()
+        if not data.get("farms"):
+            try:
+                await async_generate_demo_data()
+            except Exception:
+                pass
+
+    # Launch research in background so the port binds immediately
+    asyncio.create_task(_background_research())
     yield
 
 
