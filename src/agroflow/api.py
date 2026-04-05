@@ -16,8 +16,7 @@ from .demo import async_generate_demo_data
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Auto-research real-time data on startup if store is empty."""
-    s = store.Store()
-    data = s.load()
+    data = store.load()
     if not data.get("farms"):
         try:
             await async_generate_demo_data()
