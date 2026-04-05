@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
@@ -11,10 +12,25 @@ from . import store
 from . import ai as ai_module
 from .demo import async_generate_demo_data
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Auto-research real-time data on startup if store is empty."""
+    s = store.Store()
+    data = s.load()
+    if not data.get("farms"):
+        try:
+            await async_generate_demo_data()
+        except Exception:
+            pass  # Will serve empty until /v1/refresh is called
+    yield
+
+
 app = FastAPI(
     title="AgroFlow Intelligence API",
     description="AI-powered agricultural supply chain intelligence for Michoacan, Mexico",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
