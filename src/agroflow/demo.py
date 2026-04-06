@@ -72,15 +72,58 @@ def _get_price(lookup: dict, crop: str, grade: str) -> float:
 async def async_generate_demo_data() -> None:
     """Generate and persist demo data, enriched with real-time research."""
     from .research import run_all_research
+    from .feeds import fetch_all_realtime
 
-    # Run real-time research
-    research = await run_all_research()
+    # Run real-time research and live feeds concurrently
+    import asyncio
+    research_task = run_all_research()
+    feeds_task = fetch_all_realtime()
+    research, live_feeds = await asyncio.gather(research_task, feeds_task, return_exceptions=False)
 
     # Extract research data
     real_prices = research.get("prices", [])
     real_weather = research.get("weather", [])
     real_insights = research.get("insights", [])
     real_buyers = research.get("buyers", [])
+
+    # If live feeds returned weather alerts, prefer them over AI-generated ones
+    live_weather = live_feeds.get("weather", {})
+    live_alerts = live_weather.get("alerts", [])
+    if live_alerts:
+        real_weather = live_alerts
+
+    # Enrich insights with trade data
+    trade_data = live_feeds.get("trade_data", {})
+    if trade_data and trade_data.get("years"):
+        latest_year = max(trade_data["years"].keys())
+        year_data = trade_data["years"][latest_year]
+        total_val = year_data.get("total_export_value_usd", 0)
+        total_vol = year_data.get("total_volume_kg", 0)
+        source_label = "UN Comtrade live" if trade_data.get("live") else "UN Comtrade cached"
+        if total_val > 0:
+            real_insights.append({
+                "insight_type": "opportunity",
+                "title": f"Mexico avocado exports reached ${total_val / 1e9:.1f}B in {latest_year}",
+                "description": (
+                    f"According to {source_label}, Mexico exported {total_vol / 1e6:,.0f} metric tons "
+                    f"of avocados worth ${total_val / 1e9:.2f} billion in {latest_year}. "
+                    f"The US remains the dominant market. Michoacan farms should capitalize on growing demand."
+                ),
+                "priority": "high",
+                "affected_entities": ["farm-001", "farm-003", "farm-007"],
+            })
+
+    # Enrich insights with soil health data
+    soil_data = live_feeds.get("soil_health", [])
+    for soil in soil_data:
+        if soil.get("health_status") == "critical":
+            real_insights.append({
+                "insight_type": "risk",
+                "title": f"Soil health critical in {soil['region']}",
+                "description": f"Real-time soil monitoring: {soil['details']}",
+                "priority": "high",
+                "affected_entities": soil.get("farm_ids", []),
+            })
 
     price_lookup = _build_price_lookup(real_prices)
 

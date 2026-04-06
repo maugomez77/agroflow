@@ -384,6 +384,213 @@ def status():
     ))
 
     console.print("\n[dim]Commands: farms | harvests | shipments | buyers | weather | prices | quality | documents | insights | analyze | predict | optimize | report[/dim]")
+    console.print("[dim]Live feeds: live-weather | trade | soil[/dim]")
+
+
+@app.command(name="live-weather")
+def live_weather():
+    """Show real-time weather for all farm locations from Open-Meteo."""
+    import asyncio
+    from .feeds import fetch_all_farm_weather
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as prog:
+        prog.add_task("Fetching live weather from Open-Meteo...", total=None)
+        result = asyncio.run(fetch_all_farm_weather())
+
+    locations = result.get("locations", [])
+    alerts = result.get("alerts", [])
+    fetched = result.get("fetched_at", "")
+
+    if not locations:
+        console.print("[red]Unable to fetch weather data. Check your internet connection.[/red]")
+        raise typer.Exit(1)
+
+    # Current conditions table
+    table = Table(title="Live Weather -- Michoacan Farms", show_lines=True, caption=f"[dim]Source: Open-Meteo | {fetched[:19]}[/dim]")
+    table.add_column("Region", style="bold")
+    table.add_column("Farms", style="dim")
+    table.add_column("Temp (C)", justify="right")
+    table.add_column("Humidity", justify="right")
+    table.add_column("Wind (km/h)", justify="right")
+    table.add_column("Precip (mm)", justify="right")
+    table.add_column("Conditions")
+
+    for loc in locations:
+        cur = loc.get("current", {})
+        temp = cur.get("temp_c")
+        humidity = cur.get("humidity")
+        wind = cur.get("wind_kmh")
+        precip = cur.get("precipitation_mm")
+        desc = cur.get("description", "")
+
+        # Color code temperature
+        temp_str = ""
+        if temp is not None:
+            if temp < 4:
+                temp_str = f"[bold red]{temp:.1f}[/bold red]"
+            elif temp > 35:
+                temp_str = f"[bold red]{temp:.1f}[/bold red]"
+            elif temp > 28:
+                temp_str = f"[yellow]{temp:.1f}[/yellow]"
+            else:
+                temp_str = f"[green]{temp:.1f}[/green]"
+
+        farm_ids = ", ".join(loc.get("farm_ids", []))
+
+        table.add_row(
+            loc["region"], farm_ids, temp_str,
+            f"{humidity}%" if humidity is not None else "-",
+            f"{wind:.1f}" if wind is not None else "-",
+            f"{precip:.1f}" if precip is not None else "-",
+            desc,
+        )
+
+    console.print(table)
+
+    # 7-day forecast per region
+    for loc in locations:
+        daily = loc.get("daily", [])
+        if not daily:
+            continue
+        ftable = Table(title=f"7-Day Forecast: {loc['region']}", show_lines=False, box=None)
+        ftable.add_column("Date", style="dim")
+        ftable.add_column("High (C)", justify="right")
+        ftable.add_column("Low (C)", justify="right")
+        ftable.add_column("Rain (mm)", justify="right")
+        ftable.add_column("Rain %", justify="right")
+
+        for day in daily:
+            t_max = day.get("temp_max")
+            t_min = day.get("temp_min")
+            rain = day.get("precip_mm")
+            prob = day.get("precip_prob")
+
+            max_str = f"{t_max:.0f}" if t_max is not None else "-"
+            min_str = f"{t_min:.0f}" if t_min is not None else "-"
+            if t_min is not None and t_min < 4:
+                min_str = f"[bold red]{t_min:.0f}[/bold red]"
+            if t_max is not None and t_max > 35:
+                max_str = f"[bold red]{t_max:.0f}[/bold red]"
+
+            rain_str = f"{rain:.1f}" if rain is not None else "-"
+            if rain is not None and rain > 30:
+                rain_str = f"[bold red]{rain:.1f}[/bold red]"
+
+            prob_str = f"{prob}%" if prob is not None else "-"
+            if prob is not None and prob > 80:
+                prob_str = f"[bold yellow]{prob}%[/bold yellow]"
+
+            ftable.add_row(day.get("date", ""), max_str, min_str, rain_str, prob_str)
+
+        console.print(ftable)
+
+    # Alerts
+    if alerts:
+        console.print()
+        for a in alerts:
+            sev = SEVERITY_COLOR.get(a["severity"], a["severity"])
+            console.print(Panel(
+                f"[bold]{a['alert_type'].upper()}[/bold] | Severity: {sev} | Date: {a['forecast_date']}\n\n"
+                f"{a['description']}\n\n"
+                f"[dim]Affected farms: {', '.join(a.get('affected_farms', []))}[/dim]",
+                title=f"[bold yellow]{a['region']}[/bold yellow]",
+                border_style="yellow",
+            ))
+    else:
+        console.print("\n[green]No weather alerts -- conditions are normal across all regions.[/green]")
+
+
+@app.command()
+def trade():
+    """Show real Mexico avocado export data from UN Comtrade."""
+    import asyncio
+    from .feeds import fetch_comtrade_exports
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as prog:
+        prog.add_task("Fetching trade data...", total=None)
+        result = asyncio.run(fetch_comtrade_exports())
+
+    live = result.get("live", False)
+    source = result.get("source", "Unknown")
+
+    console.print(Panel(
+        f"[bold]{result.get('commodity', 'Avocados')}[/bold] (HS {result.get('hs_code', '080440')})\n"
+        f"Reporter: {result.get('reporter', 'Mexico')}\n"
+        f"Source: {'[green]LIVE[/green]' if live else '[yellow]CACHED[/yellow]'} -- {source}",
+        title="[bold green]Mexico Avocado Exports[/bold green]",
+        border_style="green",
+    ))
+
+    years = result.get("years", {})
+    for year in sorted(years.keys()):
+        ydata = years[year]
+        total_val = ydata.get("total_export_value_usd", 0)
+        total_vol = ydata.get("total_volume_kg", 0)
+
+        console.print(f"\n[bold cyan]{year}[/bold cyan]")
+        console.print(f"  Total Export Value: [bold green]${total_val:,.0f}[/bold green]")
+        console.print(f"  Total Volume: [bold]{total_vol / 1_000_000:,.0f}[/bold] thousand metric tons")
+
+        partners = ydata.get("top_partners", [])
+        if partners:
+            ptable = Table(show_lines=False, box=None, padding=(0, 2))
+            ptable.add_column("Partner", style="bold")
+            ptable.add_column("Value (USD)", justify="right", style="green")
+            ptable.add_column("Volume (tons)", justify="right")
+            ptable.add_column("Share", justify="right")
+            for p in partners:
+                pval = p.get("value_usd", 0)
+                pvol = p.get("volume_kg", 0)
+                share = (pval / total_val * 100) if total_val > 0 else 0
+                ptable.add_row(
+                    p["country"],
+                    f"${pval:,.0f}",
+                    f"{pvol / 1_000:,.0f}",
+                    f"{share:.1f}%",
+                )
+            console.print(ptable)
+
+
+@app.command()
+def soil():
+    """Show real-time soil health for all farm locations."""
+    import asyncio
+    from .feeds import fetch_all_soil_health
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as prog:
+        prog.add_task("Fetching soil data from Open-Meteo...", total=None)
+        result = asyncio.run(fetch_all_soil_health())
+
+    if not result:
+        console.print("[red]Unable to fetch soil data.[/red]")
+        raise typer.Exit(1)
+
+    table = Table(title="Soil Health -- Michoacan Farms", show_lines=True, caption="[dim]Source: Open-Meteo Soil API[/dim]")
+    table.add_column("Region", style="bold")
+    table.add_column("Farms", style="dim")
+    table.add_column("Soil Temp (C)", justify="right")
+    table.add_column("Moisture (m3/m3)", justify="right")
+    table.add_column("Status", justify="center")
+    table.add_column("Details")
+
+    health_color = {"good": "green", "stressed": "yellow", "critical": "red", "unknown": "dim"}
+
+    for s in result:
+        status = s.get("health_status", "unknown")
+        color = health_color.get(status, "white")
+        temp = s.get("soil_temp_c")
+        moisture = s.get("soil_moisture")
+
+        table.add_row(
+            s["region"],
+            ", ".join(s.get("farm_ids", [])),
+            f"{temp:.1f}" if temp is not None else "-",
+            f"{moisture:.3f}" if moisture is not None else "-",
+            f"[{color}]{status.upper()}[/{color}]",
+            s.get("details", "")[:80],
+        )
+
+    console.print(table)
 
 
 @app.command()

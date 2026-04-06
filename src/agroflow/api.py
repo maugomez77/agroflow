@@ -191,3 +191,62 @@ def run_report():
     if not prices:
         raise HTTPException(400, "No price data. Load demo data first.")
     return ai_module.generate_market_report(prices)
+
+
+# ── Live Data Feeds ───────────────────────────────────────────
+
+@app.get("/v1/weather/live")
+async def live_weather():
+    """Fetch real-time weather for all farm locations from Open-Meteo."""
+    from .feeds import fetch_all_farm_weather
+    try:
+        return await fetch_all_farm_weather()
+    except Exception as e:
+        raise HTTPException(503, f"Weather service unavailable: {e}")
+
+
+@app.get("/v1/trade")
+async def trade_data():
+    """Fetch real Mexico avocado export data from UN Comtrade."""
+    from .feeds import fetch_comtrade_exports
+    try:
+        return await fetch_comtrade_exports()
+    except Exception as e:
+        raise HTTPException(503, f"Trade data service unavailable: {e}")
+
+
+@app.get("/v1/soil/{farm_id}")
+async def soil_health(farm_id: str):
+    """Fetch real soil data for a specific farm."""
+    from .feeds import FARMS, fetch_soil_data, _classify_soil_health
+    farm = next((f for f in FARMS if f["id"] == farm_id), None)
+    if not farm:
+        raise HTTPException(404, f"Farm {farm_id} not found in feeds registry.")
+    raw = await fetch_soil_data(farm["lat"], farm["lng"])
+    if not raw:
+        raise HTTPException(503, "Soil data service unavailable.")
+    hourly = raw.get("hourly", {})
+    temps = hourly.get("soil_temperature_0cm", [])
+    moisture = hourly.get("soil_moisture_0_to_1cm", [])
+    avg_temp = sum(t for t in temps if t is not None) / max(len([t for t in temps if t is not None]), 1) if temps else None
+    avg_moisture = sum(m for m in moisture if m is not None) / max(len([m for m in moisture if m is not None]), 1) if moisture else None
+    health, details = _classify_soil_health(avg_temp, avg_moisture)
+    return {
+        "farm_id": farm_id,
+        "region": farm["region"],
+        "soil_temp_c": round(avg_temp, 1) if avg_temp else None,
+        "soil_moisture_m3": round(avg_moisture, 3) if avg_moisture else None,
+        "health_status": health,
+        "details": details,
+        "raw_hourly": {"soil_temperature_0cm": temps, "soil_moisture_0_to_1cm": moisture},
+    }
+
+
+@app.get("/v1/soil")
+async def all_soil_health():
+    """Fetch real soil data for all farms."""
+    from .feeds import fetch_all_soil_health
+    try:
+        return await fetch_all_soil_health()
+    except Exception as e:
+        raise HTTPException(503, f"Soil data service unavailable: {e}")

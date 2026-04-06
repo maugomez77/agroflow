@@ -189,49 +189,84 @@ Include at least 9 entries covering all crops and major markets."""
 
 
 async def research_weather(regions: list[str] | None = None) -> list[dict]:
-    """Fetch weather data for Michoacan farming regions."""
+    """Fetch weather data for Michoacan farming regions.
+
+    Uses Open-Meteo real-time API (no key needed) as primary source.
+    Falls back to DuckDuckGo + Claude if Open-Meteo fails.
+    """
+    # Try Open-Meteo real-time feeds first (no API key needed)
+    try:
+        from .feeds import fetch_all_farm_weather
+        weather_result = await fetch_all_farm_weather()
+        alerts = weather_result.get("alerts", [])
+        if alerts:
+            # Validate and return real alerts
+            valid = []
+            for w in alerts:
+                if all(k in w for k in ("region", "alert_type", "severity", "description", "forecast_date")):
+                    if w["alert_type"] in ("frost", "rain", "heat", "wind"):
+                        if w["severity"] in ("low", "medium", "high", "critical"):
+                            valid.append(w)
+            if valid:
+                return valid
+        # If Open-Meteo returned data but no alerts, weather is fine --
+        # generate a minimal "all clear" style alert from actual data
+        locations = weather_result.get("locations", [])
+        if locations:
+            mild_alerts = []
+            for loc in locations:
+                cur = loc.get("current", {})
+                daily = loc.get("daily", [])
+                if cur.get("temp_c") is not None:
+                    # Find the most notable condition in the 7-day forecast
+                    min_temps = [d["temp_min"] for d in daily if d.get("temp_min") is not None]
+                    max_precips = [d["precip_mm"] for d in daily if d.get("precip_mm") is not None]
+                    lowest = min(min_temps) if min_temps else cur["temp_c"]
+                    highest_rain = max(max_precips) if max_precips else 0
+
+                    if lowest < 8:  # Notable cool temps
+                        mild_alerts.append({
+                            "region": loc["region"],
+                            "alert_type": "frost",
+                            "severity": "low",
+                            "description": (
+                                f"Cool temperatures in {loc['region']}: overnight lows reaching {lowest:.1f} C. "
+                                f"Currently {cur['temp_c']:.1f} C. No immediate frost risk but monitor conditions."
+                            ),
+                            "forecast_date": daily[0]["date"] if daily else _today(),
+                            "affected_farms": loc["farm_ids"],
+                        })
+                    elif highest_rain > 10:  # Some rain expected
+                        mild_alerts.append({
+                            "region": loc["region"],
+                            "alert_type": "rain",
+                            "severity": "low",
+                            "description": (
+                                f"Moderate rain expected in {loc['region']}: up to {highest_rain:.1f} mm forecast. "
+                                f"Currently {cur['temp_c']:.1f} C. Normal seasonal conditions."
+                            ),
+                            "forecast_date": daily[0]["date"] if daily else _today(),
+                            "affected_farms": loc["farm_ids"],
+                        })
+            if mild_alerts:
+                return mild_alerts
+    except Exception:
+        pass  # Fall through to DuckDuckGo fallback
+
+    # --- DuckDuckGo + Claude fallback ---
     if regions is None:
         regions = list(REGIONS.keys())
 
     weather_data = []
-    owm_key = os.environ.get("OPENWEATHERMAP_API_KEY", "")
-
-    # Try OpenWeatherMap first
-    if owm_key:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            for region in regions:
-                lat, lon = REGIONS.get(region, (19.4181, -102.0534))
-                try:
-                    resp = await client.get(
-                        "https://api.openweathermap.org/data/2.5/weather",
-                        params={"lat": lat, "lon": lon, "appid": owm_key, "units": "metric"},
-                    )
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        weather_data.append({
-                            "region": region,
-                            "temp_c": data["main"]["temp"],
-                            "temp_min_c": data["main"]["temp_min"],
-                            "temp_max_c": data["main"]["temp_max"],
-                            "humidity": data["main"]["humidity"],
-                            "wind_speed_kmh": data["wind"]["speed"] * 3.6,
-                            "description": data["weather"][0]["description"],
-                            "rain_mm": data.get("rain", {}).get("1h", 0),
-                        })
-                except Exception:
-                    pass
-
-    # Fall back to DuckDuckGo search for weather
-    if not weather_data:
-        for region in regions:
-            results = await _search_with_delay(f"weather {region} Michoacan Mexico today forecast", max_results=3)
-            weather_data.append({
-                "region": region,
-                "search_results": [
-                    {"title": r.get("title", ""), "body": r.get("body", "")}
-                    for r in results
-                ],
-            })
+    for region in regions:
+        results = await _search_with_delay(f"weather {region} Michoacan Mexico today forecast", max_results=3)
+        weather_data.append({
+            "region": region,
+            "search_results": [
+                {"title": r.get("title", ""), "body": r.get("body", "")}
+                for r in results
+            ],
+        })
 
     if not weather_data:
         return _default_weather()
