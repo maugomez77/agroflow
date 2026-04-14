@@ -16,6 +16,10 @@ class CropType(str, Enum):
     berry = "berry"
     lemon = "lemon"
     mango = "mango"
+    rose = "rose"
+    chrysanthemum = "chrysanthemum"
+    gerbera = "gerbera"
+    lily = "lily"
 
 
 class QualityGrade(str, Enum):
@@ -201,3 +205,116 @@ class DemoStats(BaseModel):
     monthly_export_tons: float
     revenue_ytd_usd: float
     top_buyers: list[str] = []
+
+
+# --- Cooperatives ---
+
+class Cooperative(BaseModel):
+    id: str
+    name: str
+    region: str
+    member_farm_ids: list[str] = []
+    primary_crop: CropType
+    contact: str
+    revenue_split_pct: float = 85.0  # % of revenue distributed to members
+    coop_fee_pct: float = 15.0
+    certifications: list[CertificationType] = []
+    founded_year: int
+    description: str = ""
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+
+# --- Subscription Tiers ---
+
+class SubscriptionTier(str, Enum):
+    starter = "starter"
+    pro = "pro"
+    enterprise = "enterprise"
+
+
+class Subscription(BaseModel):
+    tier: SubscriptionTier = SubscriptionTier.starter
+    started_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    organization: str = "Default Organization"
+    seats: int = 1
+    price_usd_monthly: float = 0.0
+    features: list[str] = []
+
+
+# --- Phytosanitary Compliance (SENASICA → APHIS) ---
+
+class PhytoStatus(str, Enum):
+    draft = "draft"
+    submitted = "submitted"
+    inspection_scheduled = "inspection_scheduled"
+    approved = "approved"
+    rejected = "rejected"
+    expired = "expired"
+
+
+class RiskLevel(str, Enum):
+    very_low = "very_low"
+    low = "low"
+    medium = "medium"
+    high = "high"
+    critical = "critical"
+
+
+class PhytoRequirement(BaseModel):
+    code: str
+    description: str
+    destination: Destination
+    crop_type: CropType
+    mandatory: bool = True
+    issuing_authority: str = "SENASICA"
+
+
+class PhytoCertificate(BaseModel):
+    id: str
+    shipment_id: Optional[str] = None
+    farm_id: str
+    crop_type: CropType
+    destination: Destination
+    senasica_cert_number: Optional[str] = None
+    aphis_inspection_id: Optional[str] = None
+    status: PhytoStatus = PhytoStatus.draft
+    issued_date: Optional[str] = None
+    expiry_date: Optional[str] = None
+    inspection_date: Optional[str] = None
+    requirements_met: list[str] = []
+    requirements_missing: list[str] = []
+    rejection_reason: Optional[str] = None
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+
+class RejectionRiskAssessment(BaseModel):
+    certificate_id: str
+    risk_level: RiskLevel
+    risk_score: float  # 0.0 to 1.0
+    factors: list[str] = []
+    recommendations: list[str] = []
+    estimated_loss_usd: float = 0.0
+    assessed_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+
+# --- Satellite / NDVI Vegetation Monitoring ---
+
+class VegetationStatus(str, Enum):
+    excellent = "excellent"
+    good = "good"
+    fair = "fair"
+    stressed = "stressed"
+    critical = "critical"
+
+
+class NDVIReading(BaseModel):
+    farm_id: str
+    region: str
+    date: str
+    ndvi: float  # -1.0 to 1.0 (vegetation index)
+    evi: Optional[float] = None  # enhanced vegetation index
+    solar_radiation: Optional[float] = None  # MJ/m²/day
+    cloud_cover_pct: Optional[float] = None
+    status: VegetationStatus
+    details: str = ""
+    source: str = "NASA POWER"

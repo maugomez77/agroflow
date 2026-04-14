@@ -12,16 +12,24 @@ from datetime import datetime, timedelta
 from .models import (
     BuyerMatch,
     CertificationType,
+    Cooperative,
     CropType,
     DemoStats,
+    Destination,
     ExportDocument,
     Farm,
     Harvest,
     MarketPrice,
+    NDVIReading,
+    PhytoCertificate,
+    PhytoStatus,
     QualityInspection,
     Shipment,
+    Subscription,
+    SubscriptionTier,
     SupplyChainInsight,
     TempReading,
+    VegetationStatus,
     WeatherAlert,
 )
 from . import store
@@ -165,6 +173,19 @@ async def async_generate_demo_data() -> None:
         Farm(id="farm-012", name="Citricos Ario", location_lat=19.2012, location_lng=-101.7234,
              crop_type=CropType.lemon, hectares=10, owner="Ricardo Soto Jimenez",
              contact="+52 459 456 7890", created_at="2025-03-01T07:30:00"),
+        # Estado de México floriculture (Villa Guerrero / Tenancingo / Coatepec Harinas)
+        Farm(id="farm-013", name="Floricultura Villa Guerrero", location_lat=18.9747, location_lng=-99.6431,
+             crop_type=CropType.rose, hectares=8, owner="Adriana Lopez Morales",
+             contact="+52 714 123 4567", created_at="2024-07-12T09:00:00"),
+        Farm(id="farm-014", name="Rosas del Sol Tenancingo", location_lat=18.9603, location_lng=-99.5928,
+             crop_type=CropType.rose, hectares=12, owner="Mauricio Velazquez Ortiz",
+             contact="+52 714 234 5678", created_at="2023-09-04T08:30:00"),
+        Farm(id="farm-015", name="Crisantemos Coatepec", location_lat=18.9244, location_lng=-99.7264,
+             crop_type=CropType.chrysanthemum, hectares=14, owner="Cooperativa Flor del Valle",
+             contact="+52 714 345 6789", created_at="2024-03-22T10:15:00"),
+        Farm(id="farm-016", name="Gerberas del Valle EdoMex", location_lat=18.9747, location_lng=-99.6431,
+             crop_type=CropType.gerbera, hectares=6, owner="Luz Maria Reyes",
+             contact="+52 714 456 7890", created_at="2025-01-18T07:45:00"),
     ]
 
     # ── Harvests (30) — values adjusted to real prices ────────
@@ -265,6 +286,19 @@ async def async_generate_demo_data() -> None:
         Harvest(id="harv-030", farm_id="farm-012", crop_type=CropType.lemon,
                 quantity_kg=8400, quality_grade="B", harvest_date=_date_offset(-2),
                 estimated_value_usd=_val(8400, "lemon", "B")),
+        # Flower harvests (stems, but stored in kg-equivalent for consistency)
+        Harvest(id="harv-031", farm_id="farm-013", crop_type=CropType.rose,
+                quantity_kg=4500, quality_grade="A", harvest_date=_date_offset(-9),
+                estimated_value_usd=round(4500 * 4.20, 0)),
+        Harvest(id="harv-032", farm_id="farm-014", crop_type=CropType.rose,
+                quantity_kg=6800, quality_grade="A", harvest_date=_date_offset(-6),
+                estimated_value_usd=round(6800 * 4.40, 0)),
+        Harvest(id="harv-033", farm_id="farm-015", crop_type=CropType.chrysanthemum,
+                quantity_kg=8200, quality_grade="A", harvest_date=_date_offset(-4),
+                estimated_value_usd=round(8200 * 2.80, 0)),
+        Harvest(id="harv-034", farm_id="farm-016", crop_type=CropType.gerbera,
+                quantity_kg=3300, quality_grade="B", harvest_date=_date_offset(-2),
+                estimated_value_usd=round(3300 * 3.10, 0)),
     ]
 
     # ── Shipments (8) — ETAs adjusted to current dates ────────
@@ -512,6 +546,149 @@ async def async_generate_demo_data() -> None:
         top_buyers=[b.buyer_name for b in buyer_matches[:6]],
     )
 
+    # ── Cooperatives ──────────────────────────────────────────
+    cooperatives = [
+        Cooperative(
+            id="coop-001",
+            name="APEAM Tancítaro",
+            region="Tancítaro, Michoacán",
+            member_farm_ids=["farm-002", "farm-005", "farm-007"],
+            primary_crop=CropType.avocado,
+            contact="+52 452 100 2000",
+            revenue_split_pct=85.0,
+            coop_fee_pct=15.0,
+            certifications=[CertificationType.global_gap, CertificationType.organic],
+            founded_year=2010,
+            description=(
+                "Asociación de productores de aguacate en Tancítaro. "
+                "Pooling de cosechas para exportación directa al mercado estadounidense, "
+                "reduciendo intermediarios y maximizando el precio por kilo."
+            ),
+        ),
+        Cooperative(
+            id="coop-002",
+            name="Cooperativa Berries del Bajío",
+            region="Los Reyes, Michoacán",
+            member_farm_ids=["farm-009", "farm-010", "farm-011"],
+            primary_crop=CropType.berry,
+            contact="+52 354 100 3000",
+            revenue_split_pct=82.0,
+            coop_fee_pct=18.0,
+            certifications=[CertificationType.global_gap, CertificationType.fair_trade],
+            founded_year=2015,
+            description=(
+                "Cooperativa de productores de fresa, frambuesa y zarzamora "
+                "para exportación a EE.UU. y Europa con certificación Fair Trade."
+            ),
+        ),
+        Cooperative(
+            id="coop-003",
+            name="Flor del Valle Estado de México",
+            region="Villa Guerrero, Estado de México",
+            member_farm_ids=["farm-013", "farm-014", "farm-015", "farm-016"],
+            primary_crop=CropType.rose,
+            contact="+52 714 100 4000",
+            revenue_split_pct=80.0,
+            coop_fee_pct=20.0,
+            certifications=[CertificationType.global_gap],
+            founded_year=2018,
+            description=(
+                "Cooperativa floricultora de Villa Guerrero, Tenancingo y Coatepec Harinas. "
+                "Exporta rosas, crisantemos y gerberas a EE.UU. y la UE consolidando "
+                "volumen para negociar mejores precios con compradores internacionales."
+            ),
+        ),
+    ]
+
+    # ── Phytosanitary Certificates ────────────────────────────
+    phyto_certs = [
+        PhytoCertificate(
+            id="phyto-001",
+            shipment_id="ship-001",
+            farm_id="farm-001",
+            crop_type=CropType.avocado,
+            destination=Destination.US,
+            senasica_cert_number="MX-PHY-2026-04891",
+            aphis_inspection_id="APHIS-CA-2026-12034",
+            status=PhytoStatus.approved,
+            issued_date=_date_offset(-17),
+            expiry_date=_date_offset(73),
+            inspection_date=_date_offset(-18),
+            requirements_met=[
+                "MX-AV-US-01", "MX-AV-US-02", "MX-AV-US-03",
+                "MX-AV-US-04", "MX-AV-US-05",
+            ],
+            requirements_missing=[],
+        ),
+        PhytoCertificate(
+            id="phyto-002",
+            shipment_id="ship-004",
+            farm_id="farm-008",
+            crop_type=CropType.avocado,
+            destination=Destination.US,
+            senasica_cert_number="MX-PHY-2026-04902",
+            aphis_inspection_id=None,
+            status=PhytoStatus.draft,
+            issued_date=_date_offset(-2),
+            expiry_date=_date_offset(88),
+            requirements_met=["MX-AV-US-01", "MX-AV-US-02"],
+            requirements_missing=["MX-AV-US-03", "MX-AV-US-04", "MX-AV-US-05"],
+        ),
+        PhytoCertificate(
+            id="phyto-003",
+            shipment_id="ship-006",
+            farm_id="farm-009",
+            crop_type=CropType.berry,
+            destination=Destination.EU,
+            senasica_cert_number="MX-PHY-2026-04823",
+            status=PhytoStatus.approved,
+            issued_date=_date_offset(-19),
+            expiry_date=_date_offset(71),
+            inspection_date=_date_offset(-20),
+            requirements_met=["MX-BR-US-01", "MX-BR-US-02", "MX-BR-US-03"],
+            requirements_missing=[],
+        ),
+        PhytoCertificate(
+            id="phyto-004",
+            shipment_id=None,
+            farm_id="farm-014",
+            crop_type=CropType.rose,
+            destination=Destination.US,
+            senasica_cert_number="MX-PHY-2026-04955",
+            aphis_inspection_id=None,
+            status=PhytoStatus.submitted,
+            issued_date=_date_offset(-3),
+            expiry_date=_date_offset(87),
+            requirements_met=["MX-FL-US-02"],
+            requirements_missing=["MX-FL-US-01", "MX-FL-US-03"],
+        ),
+    ]
+
+    # ── NDVI seed readings (cached, will be refreshed live by /v1/satellite) ──
+    ndvi_seed = [
+        NDVIReading(
+            farm_id=f.id, region=f.name.split()[-1] if f.name else "Unknown",
+            date=_today(),
+            ndvi=round(0.55 + (hash(f.id) % 30) / 100.0, 2),
+            evi=round(0.45 + (hash(f.id) % 25) / 100.0, 2),
+            solar_radiation=round(18.0 + (hash(f.id) % 10) / 10.0, 1),
+            cloud_cover_pct=round(20 + (hash(f.id) % 40), 1),
+            status=VegetationStatus.good,
+            details="Seed reading; refresh via /v1/satellite for live NASA POWER data.",
+            source="seed",
+        )
+        for f in farms
+    ]
+
+    # ── Default subscription: enterprise so demo unlocks all features ──
+    subscription = Subscription(
+        tier=SubscriptionTier.enterprise,
+        organization="AgroFlow Demo",
+        seats=10,
+        price_usd_monthly=store.TIER_PRICING.get("enterprise", 499.0),
+        features=store.TIER_FEATURES.get("enterprise", []),
+    )
+
     # ── Persist everything ─────────────────────────────────────
     data = {
         "farms": [f.model_dump() for f in farms],
@@ -524,6 +701,11 @@ async def async_generate_demo_data() -> None:
         "export_documents": [d.model_dump() for d in export_documents],
         "insights": [i.model_dump() for i in insights],
         "stats": stats.model_dump(),
+        "cooperatives": [c.model_dump() for c in cooperatives],
+        "phyto_certificates": [p.model_dump() for p in phyto_certs],
+        "rejection_risks": [],
+        "ndvi_readings": [n.model_dump() for n in ndvi_seed],
+        "subscription": subscription.model_dump(),
     }
     store.save(data)
 

@@ -1,6 +1,14 @@
 /* AgroFlow Intelligence — TypeScript types matching Python Pydantic models */
 
-export type CropType = "avocado" | "berry" | "lemon" | "mango";
+export type CropType =
+  | "avocado"
+  | "berry"
+  | "lemon"
+  | "mango"
+  | "rose"
+  | "chrysanthemum"
+  | "gerbera"
+  | "lily";
 export type QualityGrade = "A" | "B" | "C";
 export type ShipmentStatus = "preparing" | "in_transit" | "customs" | "delivered";
 export type DestinationType = "US" | "EU" | "Asia" | "domestic";
@@ -128,4 +136,130 @@ export interface AnalysisResult {
   supply_chain: string;
   risks: string;
   market: string;
+}
+
+/* ── Cooperatives ───────────────────────────── */
+export interface Cooperative {
+  id: string;
+  name: string;
+  region: string;
+  member_farm_ids: string[];
+  primary_crop: CropType;
+  contact: string;
+  revenue_split_pct: number;
+  coop_fee_pct: number;
+  certifications: CertificationType[];
+  founded_year: number;
+  description: string;
+  created_at: string;
+}
+
+export interface CooperativeAggregated {
+  cooperative: Cooperative;
+  member_count: number;
+  total_hectares: number;
+  total_harvest_kg: number;
+  total_value_usd: number;
+  member_distribution_usd: number;
+  coop_fee_usd: number;
+  grade_a_pct: number;
+  harvests_count: number;
+}
+
+/* ── Subscription / Tier Gating ─────────────── */
+export type SubscriptionTier = "starter" | "pro" | "enterprise";
+
+export interface SubscriptionInfo {
+  tier: SubscriptionTier;
+  organization: string;
+  seats: number;
+  price_usd_monthly: number;
+  features: string[];
+  started_at: string;
+  all_tiers: Record<
+    string,
+    { price_usd_monthly: number; features: string[] }
+  >;
+}
+
+/* ── Phytosanitary Compliance ───────────────── */
+export type PhytoStatus =
+  | "draft"
+  | "submitted"
+  | "inspection_scheduled"
+  | "approved"
+  | "rejected"
+  | "expired";
+
+export type RiskLevel = "very_low" | "low" | "medium" | "high" | "critical";
+
+export interface PhytoRequirement {
+  code: string;
+  description: string;
+  destination: DestinationType;
+  crop_type: CropType;
+  mandatory: boolean;
+  issuing_authority: string;
+}
+
+export interface PhytoCertificate {
+  id: string;
+  shipment_id: string | null;
+  farm_id: string;
+  crop_type: CropType;
+  destination: DestinationType;
+  senasica_cert_number: string | null;
+  aphis_inspection_id: string | null;
+  status: PhytoStatus;
+  issued_date: string | null;
+  expiry_date: string | null;
+  inspection_date: string | null;
+  requirements_met: string[];
+  requirements_missing: string[];
+  rejection_reason: string | null;
+  created_at: string;
+}
+
+export interface PhytoComplianceCheck {
+  certificate_id: string;
+  destination: string;
+  crop_type: string;
+  total_requirements: number;
+  met_count: number;
+  missing_count: number;
+  coverage_pct: number;
+  met: string[];
+  missing: string[];
+  requirements: PhytoRequirement[];
+}
+
+export interface RejectionRiskAssessment {
+  certificate_id: string;
+  risk_level: RiskLevel;
+  risk_score: number;
+  factors: string[];
+  recommendations: string[];
+  estimated_loss_usd: number;
+  assessed_at: string;
+}
+
+/* ── Satellite / NDVI ───────────────────────── */
+export type VegetationStatus =
+  | "excellent"
+  | "good"
+  | "fair"
+  | "stressed"
+  | "critical";
+
+export interface SatelliteReading {
+  farm_id: string;
+  region: string;
+  date: string;
+  ndvi: number;
+  evi: number | null;
+  solar_radiation: number | null;
+  cloud_cover_pct: number | null;
+  status: VegetationStatus;
+  details: string;
+  source: string;
 }

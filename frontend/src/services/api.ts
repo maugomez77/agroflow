@@ -11,6 +11,14 @@ import type {
   SupplyChainInsight,
   DemoStats,
   AnalysisResult,
+  Cooperative,
+  CooperativeAggregated,
+  SubscriptionInfo,
+  SubscriptionTier,
+  PhytoCertificate,
+  PhytoComplianceCheck,
+  RejectionRiskAssessment,
+  SatelliteReading,
 } from "../types";
 
 const api = axios.create({
@@ -66,5 +74,52 @@ export const runPrediction = (farmId: string) =>
   api.post(`/v1/predict/${farmId}`);
 export const runOptimization = () => api.post("/v1/optimize");
 export const runMarketReport = () => api.post("/v1/report");
+
+/* ── Cooperatives ───────────────────────────── */
+export const getCooperatives = () =>
+  api.get<Cooperative[]>("/v1/cooperatives");
+export const getCooperative = (id: string) =>
+  api.get<Cooperative>(`/v1/cooperatives/${id}`);
+export const getCooperativeAggregated = (id: string) =>
+  api.get<CooperativeAggregated>(`/v1/cooperatives/${id}/aggregated`);
+export const optimizeCooperative = (id: string) =>
+  api.post(`/v1/cooperatives/${id}/optimize`);
+
+/* ── Satellite / NDVI ───────────────────────── */
+export const getSatelliteAll = () =>
+  api.get<SatelliteReading[]>("/v1/satellite");
+export const getSatelliteFarm = (farmId: string) =>
+  api.get<SatelliteReading>(`/v1/satellite/${farmId}`);
+export const getSatelliteCached = () =>
+  api.get<SatelliteReading[]>("/v1/satellite/cached/all");
+
+/* ── Phytosanitary Compliance ───────────────── */
+export const getPhytoCertificates = (params?: {
+  shipment_id?: string;
+  farm_id?: string;
+}) => api.get<PhytoCertificate[]>("/v1/phyto/certificates", { params });
+export const checkPhytoCertificate = (id: string) =>
+  api.get<PhytoComplianceCheck>(`/v1/phyto/certificates/${id}/check`);
+export const assessPhytoRisk = (id: string, value?: number) =>
+  api.post<RejectionRiskAssessment>(
+    `/v1/phyto/certificates/${id}/risk`,
+    null,
+    { params: { shipment_value_usd: value ?? 50000 } }
+  );
+export const aiPhytoRisk = (id: string) =>
+  api.post(`/v1/phyto/certificates/${id}/ai-risk`);
+export const getPhytoRequirements = (destination: string, cropType: string) =>
+  api.get(`/v1/phyto/requirements/${destination}/${cropType}`);
+
+/* ── Subscription ──────────────────────────── */
+export const getSubscription = () => api.get<SubscriptionInfo>("/v1/subscription");
+export const updateSubscription = (
+  tier: SubscriptionTier,
+  organization?: string,
+  seats: number = 1
+) =>
+  api.post("/v1/subscription", null, {
+    params: { tier, organization, seats },
+  });
 
 export default api;

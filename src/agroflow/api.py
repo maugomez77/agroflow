@@ -5,12 +5,21 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import store
 from . import ai as ai_module
+from . import phyto as phyto_module
 from .demo import async_generate_demo_data
+from .models import (
+    Cooperative,
+    NDVIReading,
+    PhytoCertificate,
+    PhytoStatus,
+    Subscription,
+    SubscriptionTier,
+)
 
 
 @asynccontextmanager
@@ -250,3 +259,198 @@ async def all_soil_health():
         return await fetch_all_soil_health()
     except Exception as e:
         raise HTTPException(503, f"Soil data service unavailable: {e}")
+
+
+# ── Tier Gating ───────────────────────────────────────────────
+
+def require_feature(feature: str):
+    """FastAPI dependency that blocks calls if the active tier lacks the feature."""
+    def _dep() -> None:
+        sub = store.get_subscription()
+        if not store.tier_allows(sub.tier.value, feature):
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "error": "feature_not_in_tier",
+                    "feature": feature,
+                    "current_tier": sub.tier.value,
+                    "upgrade_to": "pro" if feature in store.TIER_FEATURES["pro"] else "enterprise",
+                    "message": f"Feature '{feature}' requires a higher subscription tier.",
+                },
+            )
+    return _dep
+
+
+# ── Subscription ──────────────────────────────────────────────
+
+@app.get("/v1/subscription")
+def get_subscription():
+    sub = store.get_subscription()
+    return {
+        "tier": sub.tier.value,
+        "organization": sub.organization,
+        "seats": sub.seats,
+        "price_usd_monthly": store.TIER_PRICING.get(sub.tier.value, 0.0),
+        "features": store.TIER_FEATURES.get(sub.tier.value, []),
+        "started_at": sub.started_at,
+        "all_tiers": {
+            tier: {
+                "price_usd_monthly": store.TIER_PRICING.get(tier, 0.0),
+                "features": feats,
+            }
+            for tier, feats in store.TIER_FEATURES.items()
+        },
+    }
+
+
+@app.post("/v1/subscription")
+def update_subscription(tier: str, organization: Optional[str] = None, seats: int = 1):
+    if tier not in ("starter", "pro", "enterprise"):
+        raise HTTPException(400, f"Invalid tier '{tier}'. Must be starter/pro/enterprise.")
+    sub = Subscription(
+        tier=SubscriptionTier(tier),
+        organization=organization or "Default Organization",
+        seats=seats,
+        price_usd_monthly=store.TIER_PRICING.get(tier, 0.0),
+        features=store.TIER_FEATURES.get(tier, []),
+    )
+    store.set_subscription(sub)
+    return {"status": "updated", "tier": tier, "features": sub.features}
+
+
+# ── Cooperatives (Enterprise tier) ────────────────────────────
+
+@app.get("/v1/cooperatives", dependencies=[Depends(require_feature("cooperatives"))])
+def list_cooperatives():
+    return [c.model_dump() for c in store.list_cooperatives()]
+
+
+@app.get("/v1/cooperatives/{coop_id}", dependencies=[Depends(require_feature("cooperatives"))])
+def get_cooperative(coop_id: str):
+    coop = store.get_cooperative(coop_id)
+    if not coop:
+        raise HTTPException(404, "Cooperative not found")
+    return coop.model_dump()
+
+
+@app.get(
+    "/v1/cooperatives/{coop_id}/aggregated",
+    dependencies=[Depends(require_feature("cooperatives"))],
+)
+def get_cooperative_aggregated(coop_id: str):
+    agg = store.aggregate_cooperative(coop_id)
+    if not agg:
+        raise HTTPException(404, "Cooperative not found")
+    return agg
+
+
+@app.post(
+    "/v1/cooperatives/{coop_id}/optimize",
+    dependencies=[Depends(require_feature("ai_cooperative_optimize"))],
+)
+def optimize_cooperative(coop_id: str):
+    coop = store.get_cooperative(coop_id)
+    if not coop:
+        raise HTTPException(404, "Cooperative not found")
+    member_ids = set(coop.member_farm_ids)
+    harvests = [h.model_dump() for h in store.list_harvests() if h.farm_id in member_ids]
+    buyers = [b.model_dump() for b in store.list_buyer_matches()]
+    return ai_module.optimize_cooperative_pooling(coop.model_dump(), harvests, buyers)
+
+
+# ── Satellite / NDVI (Pro tier) ───────────────────────────────
+
+@app.get("/v1/satellite", dependencies=[Depends(require_feature("satellite"))])
+async def list_satellite():
+    """Live NASA POWER NDVI proxy for all farms."""
+    from .feeds import fetch_all_satellite
+    try:
+        return await fetch_all_satellite()
+    except Exception as e:
+        raise HTTPException(503, f"Satellite service unavailable: {e}")
+
+
+@app.get("/v1/satellite/{farm_id}", dependencies=[Depends(require_feature("satellite"))])
+async def satellite_for_farm(farm_id: str):
+    from .feeds import fetch_satellite_for_farm
+    data = await fetch_satellite_for_farm(farm_id)
+    if not data:
+        raise HTTPException(404, "Farm not found or satellite data unavailable")
+    return data
+
+
+@app.get("/v1/satellite/cached/all")
+def cached_satellite():
+    """Return cached NDVI readings (no live fetch). Available on all tiers."""
+    return [r.model_dump() for r in store.list_ndvi_readings()]
+
+
+# ── Phytosanitary Compliance (Pro tier) ───────────────────────
+
+@app.get("/v1/phyto/requirements/{destination}/{crop_type}")
+def get_phyto_requirements(destination: str, crop_type: str):
+    reqs = phyto_module.get_requirements(destination, crop_type)
+    if not reqs:
+        return {"destination": destination, "crop_type": crop_type, "requirements": []}
+    return {
+        "destination": destination,
+        "crop_type": crop_type,
+        "requirements": [r.model_dump() for r in reqs],
+        "total": len(reqs),
+    }
+
+
+@app.get(
+    "/v1/phyto/certificates",
+    dependencies=[Depends(require_feature("phyto_compliance"))],
+)
+def list_phyto_certs(
+    shipment_id: Optional[str] = Query(None),
+    farm_id: Optional[str] = Query(None),
+):
+    return [c.model_dump() for c in store.list_phyto_certificates(shipment_id, farm_id)]
+
+
+@app.get(
+    "/v1/phyto/certificates/{cert_id}/check",
+    dependencies=[Depends(require_feature("phyto_compliance"))],
+)
+def check_phyto_cert(cert_id: str):
+    cert = store.get_phyto_certificate(cert_id)
+    if not cert:
+        raise HTTPException(404, "Certificate not found")
+    return phyto_module.check_certificate(cert)
+
+
+@app.post(
+    "/v1/phyto/certificates/{cert_id}/risk",
+    dependencies=[Depends(require_feature("phyto_compliance"))],
+)
+def assess_phyto_risk(cert_id: str, shipment_value_usd: float = 50000.0):
+    cert = store.get_phyto_certificate(cert_id)
+    if not cert:
+        raise HTTPException(404, "Certificate not found")
+    risk = phyto_module.assess_rejection_risk(cert, shipment_value_usd)
+    store.add_rejection_risk(risk)
+    return risk.model_dump()
+
+
+@app.post(
+    "/v1/phyto/certificates/{cert_id}/ai-risk",
+    dependencies=[Depends(require_feature("ai_phyto_risk"))],
+)
+def ai_phyto_risk(cert_id: str):
+    cert = store.get_phyto_certificate(cert_id)
+    if not cert:
+        raise HTTPException(404, "Certificate not found")
+    reqs = phyto_module.get_requirements(cert.destination, cert.crop_type)
+    historical = [
+        r.model_dump()
+        for r in store.list_rejection_risks()
+        if r.risk_level.value in ("high", "critical")
+    ][:5]
+    return ai_module.assess_phytosanitary_risk(
+        cert.model_dump(),
+        [r.model_dump() for r in reqs],
+        historical,
+    )

@@ -11,12 +11,12 @@ Sources:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Any
 
 import httpx
 
-# ── Farm locations (Michoacan) ────────────────────────────────
+# ── Farm locations (Michoacan + Estado de Mexico floriculture) ──
 
 FARMS = [
     {"id": "farm-001", "name": "Rancho Los Aguacates",    "region": "Uruapan",         "lat": 19.4181, "lng": -102.0534},
@@ -31,6 +31,11 @@ FARMS = [
     {"id": "farm-010", "name": "Frutillas del Sur",       "region": "Los Reyes",       "lat": 19.5876, "lng": -102.4712},
     {"id": "farm-011", "name": "Berry Paradise Tacambaro","region": "Tacambaro",       "lat": 19.2345, "lng": -101.4567},
     {"id": "farm-012", "name": "Citricos Ario",           "region": "Ario de Rosales", "lat": 19.2012, "lng": -101.7234},
+    # Estado de México floriculture (Villa Guerrero / Tenancingo / Coatepec Harinas)
+    {"id": "farm-013", "name": "Floricultura Villa Guerrero",  "region": "Villa Guerrero",   "lat": 18.9747, "lng": -99.6431},
+    {"id": "farm-014", "name": "Rosas del Sol Tenancingo",     "region": "Tenancingo",       "lat": 18.9603, "lng": -99.5928},
+    {"id": "farm-015", "name": "Crisantemos Coatepec",         "region": "Coatepec Harinas", "lat": 18.9244, "lng": -99.7264},
+    {"id": "farm-016", "name": "Gerberas del Valle EdoMex",    "region": "Villa Guerrero",   "lat": 18.9747, "lng": -99.6431},
 ]
 
 # Unique coordinates to avoid duplicate API calls
@@ -462,6 +467,162 @@ def _classify_soil_health(temp: float | None, moisture: float | None) -> tuple[s
         return "critical", " | ".join(issues)
     else:
         return "stressed", " | ".join(issues)
+
+
+# ── Combined Fetch ────────────────────────────────────────────
+
+# ── Satellite / Vegetation (NASA POWER) ──────────────────────
+
+async def fetch_nasa_power(lat: float, lng: float, days_back: int = 14) -> dict | None:
+    """Fetch agro-meteorological parameters from NASA POWER (free, no key).
+
+    Returns daily solar radiation, surface temperature, soil wetness — used as
+    NDVI proxy inputs since direct NDVI requires Sentinel/Landsat APIs with auth.
+    """
+    end = datetime.now()
+    start = end - timedelta(days=days_back)
+    url = "https://power.larc.nasa.gov/api/temporal/daily/point"
+    params = {
+        "parameters": "ALLSKY_SFC_SW_DWN,T2M,GWETROOT,GWETTOP,CLOUD_AMT",
+        "community": "AG",
+        "longitude": lng,
+        "latitude": lat,
+        "start": start.strftime("%Y%m%d"),
+        "end": end.strftime("%Y%m%d"),
+        "format": "JSON",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            return resp.json()
+    except Exception:
+        return None
+
+
+def _ndvi_proxy_from_power(data: dict) -> tuple[float, float, dict]:
+    """Estimate NDVI proxy from NASA POWER parameters.
+
+    Real NDVI requires multispectral satellite imagery; we approximate vegetation
+    vigor from solar radiation, root-zone wetness, and temperature — known drivers
+    of canopy greenness used in crop simulation models (e.g., DSSAT).
+    """
+    params = (data or {}).get("properties", {}).get("parameter", {})
+    rad = params.get("ALLSKY_SFC_SW_DWN", {})  # MJ/m²/day
+    temp = params.get("T2M", {})  # °C
+    root = params.get("GWETROOT", {})  # 0-1
+    surf = params.get("GWETTOP", {})  # 0-1
+    cloud = params.get("CLOUD_AMT", {})  # %
+
+    def _avg(d: dict) -> float | None:
+        vals = [v for v in d.values() if isinstance(v, (int, float)) and v > -100]
+        return sum(vals) / len(vals) if vals else None
+
+    avg_rad = _avg(rad)
+    avg_temp = _avg(temp)
+    avg_root = _avg(root)
+    avg_surf = _avg(surf)
+    avg_cloud = _avg(cloud)
+
+    # Build NDVI proxy: weight components into 0..1 then map to NDVI [-0.1, 0.9]
+    score = 0.5
+    if avg_root is not None:
+        # 0.20-0.40 m³/m³ ideal
+        if avg_root < 0.15:
+            score -= 0.2
+        elif avg_root > 0.45:
+            score -= 0.1
+        elif 0.20 <= avg_root <= 0.40:
+            score += 0.2
+    if avg_temp is not None:
+        if 15 <= avg_temp <= 25:
+            score += 0.15
+        elif avg_temp < 5 or avg_temp > 35:
+            score -= 0.25
+    if avg_rad is not None:
+        if avg_rad >= 18:
+            score += 0.1
+        elif avg_rad < 10:
+            score -= 0.1
+    score = max(0.0, min(1.0, score))
+    ndvi = round(-0.1 + score * 1.0, 3)
+    evi = round(ndvi * 0.85, 3)
+
+    details = {
+        "solar_radiation_mj": round(avg_rad, 1) if avg_rad is not None else None,
+        "avg_temp_c": round(avg_temp, 1) if avg_temp is not None else None,
+        "root_wetness": round(avg_root, 3) if avg_root is not None else None,
+        "surface_wetness": round(avg_surf, 3) if avg_surf is not None else None,
+        "cloud_cover_pct": round(avg_cloud, 1) if avg_cloud is not None else None,
+    }
+    return ndvi, evi, details
+
+
+def _classify_vegetation(ndvi: float) -> tuple[str, str]:
+    if ndvi >= 0.6:
+        return "excellent", f"Vigorous canopy (NDVI {ndvi}). Active photosynthesis, strong yield potential."
+    if ndvi >= 0.45:
+        return "good", f"Healthy vegetation (NDVI {ndvi}). Maintain current management."
+    if ndvi >= 0.3:
+        return "fair", f"Moderate vigor (NDVI {ndvi}). Monitor irrigation and nutrition."
+    if ndvi >= 0.15:
+        return "stressed", f"Crop stress signal (NDVI {ndvi}). Inspect for water/nutrient deficit, pest pressure."
+    return "critical", f"Severe vegetation decline (NDVI {ndvi}). Field inspection urgent."
+
+
+async def fetch_satellite_for_farm(farm_id: str) -> dict | None:
+    """Fetch NASA POWER NDVI proxy + meteorology for a single farm."""
+    farm = next((f for f in FARMS if f["id"] == farm_id), None)
+    if not farm:
+        return None
+    raw = await fetch_nasa_power(farm["lat"], farm["lng"])
+    if not raw:
+        return None
+    ndvi, evi, details = _ndvi_proxy_from_power(raw)
+    status, msg = _classify_vegetation(ndvi)
+    return {
+        "farm_id": farm_id,
+        "region": farm["region"],
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "ndvi": ndvi,
+        "evi": evi,
+        "solar_radiation": details["solar_radiation_mj"],
+        "cloud_cover_pct": details["cloud_cover_pct"],
+        "status": status,
+        "details": msg,
+        "source": "NASA POWER",
+        "raw": details,
+    }
+
+
+async def fetch_all_satellite() -> list[dict]:
+    """Fetch NDVI proxy for all unique farm locations concurrently."""
+    tasks = [fetch_nasa_power(loc["lat"], loc["lng"]) for loc in UNIQUE_LOCATIONS.values()]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    out: list[dict] = []
+    today = datetime.now().strftime("%Y-%m-%d")
+    for loc, raw in zip(UNIQUE_LOCATIONS.values(), results):
+        if isinstance(raw, Exception) or raw is None:
+            for fid in loc["farm_ids"]:
+                out.append({
+                    "farm_id": fid, "region": loc["region"], "date": today,
+                    "ndvi": 0.0, "evi": 0.0, "solar_radiation": None,
+                    "cloud_cover_pct": None, "status": "fair",
+                    "details": "Satellite data unavailable, using placeholder.",
+                    "source": "fallback",
+                })
+            continue
+        ndvi, evi, details = _ndvi_proxy_from_power(raw)
+        status, msg = _classify_vegetation(ndvi)
+        for fid in loc["farm_ids"]:
+            out.append({
+                "farm_id": fid, "region": loc["region"], "date": today,
+                "ndvi": ndvi, "evi": evi,
+                "solar_radiation": details["solar_radiation_mj"],
+                "cloud_cover_pct": details["cloud_cover_pct"],
+                "status": status, "details": msg, "source": "NASA POWER",
+            })
+    return out
 
 
 # ── Combined Fetch ────────────────────────────────────────────

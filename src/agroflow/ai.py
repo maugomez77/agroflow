@@ -172,6 +172,63 @@ Return JSON with:
     return _to_json(_ask(SYSTEM, prompt))
 
 
+def assess_phytosanitary_risk(
+    certificate: dict,
+    requirements: list[dict],
+    historical_rejections: list[dict] | None = None,
+) -> dict:
+    """AI-powered SENASICA → APHIS rejection-risk analysis with mitigation plan."""
+    prompt = f"""You are a Mexican phytosanitary compliance expert advising avocado/berry/flower
+exporters from Michoacán and Estado de México. Analyze this certificate against APHIS/SENASICA
+requirements and provide a rejection-risk assessment.
+
+Certificate: {json.dumps(certificate, indent=2)}
+
+Required SENASICA/APHIS rules: {json.dumps(requirements, indent=2)}
+
+Historical rejections (recent): {json.dumps(historical_rejections or [], indent=2)}
+
+Return JSON with:
+{{
+  "risk_level": "very_low/low/medium/high/critical",
+  "risk_score": 0.0,
+  "primary_concerns": ["..."],
+  "mitigation_steps": [
+    {{"action": "...", "owner": "exporter/SENASICA/USDA APHIS", "deadline_days": 0, "priority": "high/medium/low"}}
+  ],
+  "estimated_processing_days": 0,
+  "estimated_loss_if_rejected_usd": 0,
+  "comparable_rejections_summary": "..."
+}}"""
+    return _to_json(_ask(SYSTEM, prompt))
+
+
+def optimize_cooperative_pooling(cooperative: dict, member_harvests: list[dict], buyers: list[dict]) -> dict:
+    """Suggest how a cooperative should pool its members' harvests for maximum revenue."""
+    prompt = f"""You are advising a Mexican agricultural cooperative on optimal harvest pooling
+and buyer allocation. The cooperative aggregates harvests from member farms and negotiates
+collectively with international buyers.
+
+Cooperative: {json.dumps(cooperative, indent=2)}
+Member Harvests (recent): {json.dumps(member_harvests[:25], indent=2)}
+Available Buyers: {json.dumps(buyers, indent=2)}
+
+Return JSON with:
+{{
+  "summary": "...",
+  "pooling_strategy": [
+    {{"buyer": "...", "harvest_ids": ["harv-xxx"], "total_kg": 0, "revenue_usd": 0, "rationale": "..."}}
+  ],
+  "member_distribution": [
+    {{"farm_id": "farm-xxx", "share_pct": 0.0, "estimated_payout_usd": 0}}
+  ],
+  "negotiation_leverage_points": ["..."],
+  "total_pooled_revenue_usd": 0,
+  "vs_individual_selling_uplift_pct": 0
+}}"""
+    return _to_json(_ask(SYSTEM, prompt))
+
+
 def generate_market_report(prices: list[dict], trends: list[dict] | None = None) -> dict:
     """Generate a comprehensive market analysis report."""
     prompt = f"""Generate a market intelligence report for Michoacan agricultural exports.
