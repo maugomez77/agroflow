@@ -6,3 +6,4 @@ python-dotenv>=1.0
 httpx>=0.24
 typer>=0.9
 rich>=13.0
+ddgs>=6.0
