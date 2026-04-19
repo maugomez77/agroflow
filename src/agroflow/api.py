@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import store
 from . import ai as ai_module
 from . import phyto as phyto_module
+from .database import init_db
 from .demo import async_generate_demo_data
 from .models import (
     Cooperative,
@@ -24,8 +25,10 @@ from .models import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Auto-research real-time data in background after startup."""
+    """Initialize DB schema, then auto-research real-time data in background."""
     import asyncio
+
+    init_db()
 
     async def _background_research():
         data = store.load()
@@ -35,7 +38,6 @@ async def lifespan(app: FastAPI):
             except Exception:
                 pass
 
-    # Launch research in background so the port binds immediately
     asyncio.create_task(_background_research())
     yield
 

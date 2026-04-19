@@ -1,4 +1,9 @@
-"""JSON file store for AgroFlow Intelligence."""
+"""Persistence layer for AgroFlow.
+
+Hybrid: Postgres JSONB blob when DATABASE_URL is set (Render), JSON file fallback
+for local dev / CLI. Render free tier has ephemeral disk — JSON would be wiped on
+every cold start, so production must use Postgres.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +11,7 @@ import json
 from pathlib import Path
 from typing import Optional
 
+from .database import SessionLocal, KVStore, is_db_enabled
 from .models import (
     BuyerMatch,
     Cooperative,
@@ -46,11 +52,20 @@ _EMPTY: dict = {
 }
 
 
+_KV_KEY = "main"
+
+
 def _ensure_dir() -> None:
     STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def load() -> dict:
+    if is_db_enabled():
+        with SessionLocal() as s:
+            row = s.get(KVStore, _KV_KEY)
+            if row and row.value:
+                return {**_EMPTY, **row.value}
+            return {**_EMPTY}
     _ensure_dir()
     if STORE_PATH.exists():
         return json.loads(STORE_PATH.read_text())
@@ -58,6 +73,15 @@ def load() -> dict:
 
 
 def save(data: dict) -> None:
+    if is_db_enabled():
+        with SessionLocal() as s:
+            row = s.get(KVStore, _KV_KEY)
+            if row:
+                row.value = data
+            else:
+                s.add(KVStore(key=_KV_KEY, value=data))
+            s.commit()
+        return
     _ensure_dir()
     STORE_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False))
 
